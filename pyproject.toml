@@ -1,0 +1,20 @@
+# Tool config only: the project runs inside the Airflow image (Dockerfile), not as an installed package.
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+src = ["include", "dags", "tests", "scripts"]
+extend-exclude = ["dbt/taxi/target", "logs", "data"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "BLE", "SIM"]
+ignore = [
+    "B008",   # Airflow injects context through default arguments (data_interval_start: datetime = None)
+    "RUF001",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"dags/*" = ["RUF013"]               # context params default to None by Airflow convention
+"include/taxi/config.py" = ["E501"] # the rule table reads better unwrapped
+
+[tool.ruff.lint.isort]
+known-first-party = ["taxi", "tests"]

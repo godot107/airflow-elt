@@ -4,11 +4,18 @@ One CloudFormation stack, created right before a demo and deleted right after. N
 infrastructure: nothing runs, and almost nothing bills, between demos.
 
 ```
+aws login                  # as the IAM user, never root
+deploy/preflight.sh        # read-only: tools, session, default VPC, leftover stack, template, code pushed
 deploy/deploy_cost.sh      # once: $5/month budget alert on tag project=airflow-elt (free, kept)
 deploy/up.sh               # ~10-15 min: instance, Docker, image build, Airflow healthy, backfill starts
-deploy/tunnel.sh           # http://localhost:8080 over SSM; login printed by up.sh
+deploy/smoke.sh            # a few minutes later: containers, DAGs, backfill runs, transform, marts
+deploy/tunnel.sh           # Airflow on localhost:8080 and the warehouse on localhost:5433, over SSM
 deploy/down.sh             # delete everything
 ```
+
+The instance clones **GitHub**, not your working tree: push first (`preflight.sh` warns about unpushed
+commits). With the tunnel open, `notebooks/demo.ipynb` runs against the cloud stack unchanged; `up.sh`
+prints the two passwords to export.
 
 | Variable for `up.sh` | Default | |
 |---|---|---|
@@ -54,7 +61,7 @@ from the internet, and no SSH key to manage.
 ## Prerequisites
 
 - `aws login` as the IAM user (the scripts refuse root).
-- The Session Manager plugin for `tunnel.sh` (no sudo needed):
+- The Session Manager plugin for `tunnel.sh` (no sudo needed; installed on the workstation 2026-10-14):
 
   ```bash
   curl -fsSLo /tmp/smp.deb https://s3.amazonaws.com/session-manager-downloads/plugin/latest/ubuntu_64bit/session-manager-plugin.deb

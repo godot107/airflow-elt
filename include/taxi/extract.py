@@ -38,6 +38,6 @@ def download(month: str, dest_dir: Path = config.DATA_DIR) -> Path:
         while chunk := r.read(1 << 20):
             f.write(chunk)
     if part.stat().st_size != size:
-        raise IOError(f"{path.name}: got {part.stat().st_size} bytes, expected {size}")
+        raise OSError(f"{path.name}: got {part.stat().st_size} bytes, expected {size}")
     part.rename(path)
     return path

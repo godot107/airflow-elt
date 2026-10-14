@@ -15,3 +15,9 @@ sources:
             data_tests: [not_null]
           - name: tpep_pickup_datetime
             data_tests: [not_null]
+
+  - name: audit
+    schema: audit
+    description: Written by the taxi_ingest quality gate, one row per rule per check.
+    tables:
+      - name: dq_results

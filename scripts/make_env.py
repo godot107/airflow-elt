@@ -9,4 +9,5 @@ AIRFLOW_ADMIN_PASSWORD={secrets.token_urlsafe(12)}
 AIRFLOW_DB_PASSWORD={secrets.token_urlsafe(16)}
 WAREHOUSE_PASSWORD={secrets.token_urlsafe(16)}
 FERNET_KEY={base64.urlsafe_b64encode(os.urandom(32)).decode()}
-JWT_SECRET={secrets.token_urlsafe(32)}""")
+JWT_SECRET={secrets.token_urlsafe(32)}
+ALERT_WEBHOOK_URL=""")

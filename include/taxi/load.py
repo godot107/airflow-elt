@@ -11,26 +11,38 @@ import pyarrow as pa
 import pyarrow.csv as pacsv
 import pyarrow.parquet as pq
 
-from taxi import config
+from taxi import config, faults
 
 log = logging.getLogger(__name__)
 ARROW_TYPES = {"integer": pa.int32(), "timestamp": pa.timestamp("us"), "double precision": pa.float64(),
                "text": pa.string()}
 
-DDL = f"""
+def ddl(table: str = config.RAW_TABLE) -> str:
+    """Create the raw and audit tables if missing. Contract evolution: a column added to config.COLUMNS is
+    added to an existing table too (NULL for months loaded before it existed)."""
+    add_columns = "\n".join(f"alter table {table} add column if not exists {c} {t};" for c, t in config.COLUMNS.items())
+    return f"""
 create schema if not exists raw;
 create schema if not exists audit;
-create table if not exists {config.RAW_TABLE} (
+create table if not exists {table} (
     {", ".join(f"{c} {t}" for c, t in config.COLUMNS.items())},
     source_month date not null,
     loaded_at timestamptz not null default now()
 );
-create index if not exists yellow_trips_source_month on {config.RAW_TABLE} (source_month);
+{add_columns}
+create index if not exists {table.split(".")[-1]}_source_month on {table} (source_month);
 create table if not exists {config.AUDIT_TABLE} (
     run_id text, source_month date, rule text, value double precision, op text, threshold double precision,
     severity text, passed boolean, checked_at timestamptz default now()
 );
 """
+
+
+DDL = ddl()
+
+
+class ContractError(ValueError):
+    """The source file breaks the raw contract. A data problem: retrying won't fix it."""
 
 
 def conform(batch: pa.RecordBatch | pa.Table, month: str) -> tuple[pa.Table, list[str]]:
@@ -39,7 +51,7 @@ def conform(batch: pa.RecordBatch | pa.Table, month: str) -> tuple[pa.Table, lis
     by_lower = {name.lower(): name for name in batch.schema.names}
     missing = [c for c in config.REQUIRED if c not in by_lower]
     if missing:
-        raise ValueError(f"{month}: required columns missing from source: {missing}")
+        raise ContractError(f"{month}: required columns missing from source: {missing}")
     cols = {}
     for c, sql_type in config.COLUMNS.items():
         target = ARROW_TYPES.get(sql_type, pa.float64())        # numeric(10,2) travels as float64, Postgres rounds
@@ -59,8 +71,9 @@ def _copy(cur, sql: str, buf: io.BytesIO) -> None:
         cur.copy_expert(sql, buf)
 
 
-def load_month(conn, path: Path, month: str, batch_rows: int = 250_000) -> int:
-    """Stream the parquet file in batches (constant memory) into one COPY per batch, inside one transaction."""
+def load_month(conn, path: Path, month: str, batch_rows: int = 250_000, fault: str | None = None) -> int:
+    """Stream the parquet file in batches (constant memory) into one COPY per batch, inside one transaction.
+    `fault` corrupts each source batch first (demo only, see taxi/faults.py)."""
     f = pq.ParquetFile(path)
     columns = [*config.COLUMNS, "source_month"]
     copy_sql = f"copy {config.RAW_TABLE} ({', '.join(columns)}) from stdin with (format csv)"
@@ -70,6 +83,8 @@ def load_month(conn, path: Path, month: str, batch_rows: int = 250_000) -> int:
         cur.execute(f"delete from {config.RAW_TABLE} where source_month = %s", (f"{month}-01",))
         replaced = cur.rowcount
         for batch in f.iter_batches(batch_size=batch_rows):
+            if fault:
+                batch = faults.corrupt(pa.Table.from_batches([batch]), fault)
             table, extra = conform(batch, month)
             extras.update(extra)
             buf = io.BytesIO()

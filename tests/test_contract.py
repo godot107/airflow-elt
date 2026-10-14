@@ -28,11 +28,13 @@ def test_conform_maps_case_and_fills_missing_columns():
     assert extras == []
 
 
-def test_conform_reports_new_source_columns_instead_of_loading_them():
-    _, extras = load.conform(tlc_batch(cbd_congestion_fee=pa.array([0.75] * 3)), "2025-01")
-    assert extras == ["cbd_congestion_fee"]
+def test_conform_loads_the_2025_column_and_reports_unknown_ones():
+    t, extras = load.conform(tlc_batch(cbd_congestion_fee=pa.array([0.75] * 3),
+                                       future_fee=pa.array([1.0] * 3)), "2025-01")
+    assert t["cbd_congestion_fee"].to_pylist() == [0.75] * 3      # in the contract since 2025
+    assert extras == ["future_fee"]                                # not in it: logged, not loaded
 
 
 def test_conform_rejects_a_file_without_required_columns():
-    with pytest.raises(ValueError, match="pulocationid"):
+    with pytest.raises(load.ContractError, match="pulocationid"):
         load.conform(tlc_batch(PULocationID=None), "2024-01")

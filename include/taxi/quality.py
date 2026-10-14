@@ -43,7 +43,7 @@ def evaluate(metrics: dict, rules=config.RULES) -> list[Result]:
 def check(conn, month: str, start: str, end: str, run_id: str) -> list[Result]:
     with conn.cursor() as cur:
         cur.execute(metrics_sql(), {"month": f"{month}-01", "start": start, "end": end})
-        metrics = dict(zip([d[0] for d in cur.description], cur.fetchone()))
+        metrics = dict(zip([d[0] for d in cur.description], cur.fetchone(), strict=True))
         results = evaluate(metrics)
         cur.executemany(
             f"insert into {config.AUDIT_TABLE} (run_id, source_month, rule, value, op, threshold, severity, passed)"

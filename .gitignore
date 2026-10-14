@@ -8,3 +8,6 @@ dbt/taxi/dbt_packages/
 dbt/taxi/logs/
 __pycache__/
 .pytest_cache/
+.ipynb_checkpoints/
+notebooks/__pycache__/
+dbt/taxi/.user.yml

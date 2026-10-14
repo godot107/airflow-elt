@@ -1,0 +1,39 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: pip install ruff==0.16.9 sqlfluff==4.3.0
+      - run: ruff check .
+      - run: sqlfluff lint dbt/taxi/models
+
+  test:
+    # The same commands as locally: build the Airflow image, then run pytest (contract, faults, alerts,
+    # quality rules, DAG integrity, warehouse reload) and the dbt unit tests against throwaway Postgres
+    # containers. No data download: every test uses synthetic rows.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - run: python3 scripts/make_env.py > .env
+      - run: docker compose build
+      - name: migrate the Airflow metadata DB (Cosmos caches dbt ls in Airflow Variables) and create the pool
+        run: docker compose up --exit-code-from airflow-init airflow-init
+      - run: make test
+      - run: make dbt-unit
+      - if: always()
+        run: docker compose down -v

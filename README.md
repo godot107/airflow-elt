@@ -1,5 +1,8 @@
 # airflow-elt: a production-shaped ELT pipeline on NYC taxi data
 
+[![ci](https://github.com/godot107/airflow-elt/actions/workflows/ci.yml/badge.svg)](https://github.com/godot107/airflow-elt/actions/workflows/ci.yml)
+[![cloudburn](https://github.com/godot107/airflow-elt/actions/workflows/cloudburn.yml/badge.svg)](https://github.com/godot107/airflow-elt/actions/workflows/cloudburn.yml)
+
 Airflow 3 orchestrates a classic **extract → load → transform** warehouse: monthly NYC yellow-taxi trip files
 land in Postgres, pass a data-quality gate, and dbt builds staging, a fact table and marts. Everything runs
 locally with Docker Compose.
@@ -12,11 +15,18 @@ rerun, backfilled, fed late or fed bad data:
 | A task is retried, or a month is reloaded | **Idempotent loads:** delete the month + `COPY` in one transaction. Reruns replace, never duplicate (tested). |
 | History needs loading | Each run owns one **data interval** (a month), so `airflow backfill create` replays any range. |
 | The source publishes late (TLC lags ~2 months) | A **rescheduling sensor** waits up to 75 days without holding a worker slot. |
-| A bad file arrives | A **quality gate** between load and transform records every rule to an audit table and stops the run on a hard failure, so dbt never sees the month. |
-| The source schema drifts | A **column contract**: case-insensitive mapping, NULL for missing columns, new columns logged, missing required columns fail. |
+| A bad file arrives | A **quality gate** between load and transform records every rule to an audit table and stops the run on a hard failure. `fct_trips` only takes months whose latest gate passed, so a bad month never reaches the marts, even when another month triggers dbt. |
+| The source schema drifts | A **column contract**: case-insensitive mapping, casts, NULL for missing columns, unknown columns logged, missing required columns fail without retries. Adding a column to the contract adds it to the table on the next load (2025's congestion fee did). |
+| Someone needs to know | **Alerts** on every failure and on warn-level data-quality findings, to a Slack-compatible webhook (log only when none is set). |
+| Long backfills fill the disk | Each download is deleted once its month passes; a weekly **housekeeping DAG** clears stale files and old logs. |
 | Downstream should run when data changes, not at 2 a.m. | **Data-aware scheduling:** the transform DAG is triggered by the `raw_yellow_trips` asset, which only a passing month updates. |
 | Ten backfill months hit the database at once | A **pool** caps concurrent bulk loads at 2. |
-| A transform silently drops rows | **dbt tests after each model** (Cosmos), including staging-matches-raw and mart-reconciles-to-fact. |
+| A transform silently drops rows | **dbt tests after each model** (Cosmos), including staging-matches-raw and mart-reconciles-to-fact, plus **dbt unit tests** of the cleaning, approval and incremental logic. |
+| A change breaks something | **CI on every push:** ruff and sqlfluff, pytest, and dbt unit tests against throwaway Postgres containers. |
+
+**Demo it:** [`notebooks/demo.ipynb`](notebooks/demo.ipynb) drives the whole story through Airflow's REST API
+(load a month, read the gate's verdict, watch dbt start on the asset event, break a month on purpose, recover
+it), with a talk track in [docs/DEMO.md](docs/DEMO.md).
 
 ## Architecture
 
@@ -74,12 +84,25 @@ Requires Docker with Compose v2 (about 4 GB of RAM for the stack).
 ```bash
 make env                 # .env with random local secrets (gitignored)
 make up                  # build the image, start Airflow + warehouse, wait until healthy
-make test                # tests inside the image (contract, quality rules, DAG integrity, reload idempotency)
 make backfill FROM=2024-01-01 TO=2024-03-31
+make check               # lint + pytest + dbt unit tests (what CI runs)
 ```
 
 Open http://localhost:8080 (user `admin`, password in `.env`). `make psql` opens the warehouse
 (also on `localhost:5433`). `make down` stops the stack; `make nuke` also deletes both databases.
+
+| Target | |
+|---|---|
+| `make test` | pytest inside the image: contract, faults, alerts, quality rules, housekeeping, DAG integrity, warehouse reload and contract evolution |
+| `make dbt-unit` | dbt unit tests in `unit_*` schemas (never touches the real tables) |
+| `make lint` | ruff + sqlfluff (needs both on the host; `pre-commit install` runs them on commit) |
+| `make docs` | dbt docs site with the lineage graph on http://localhost:8081 |
+| `make demo-bad-month MONTH=2024-06 FAULT=bad_zones` | load a month from a deliberately corrupted source and watch the gate stop it |
+| `make demo-recover MONTH=2024-06` | remove the fault and rerun the month from `load_raw` |
+| `make notebook` | the demo notebook (`pip install -r notebooks/requirements.txt` on the host) |
+| `make dbt ARGS="..."` | any dbt command against the warehouse |
+
+Alerts: set `ALERT_WEBHOOK_URL` in `.env` to a Slack (or compatible) incoming webhook and restart.
 
 Regenerate the visuals: diagrams with
 `docker run --rm -u $(id -u):$(id -g) -v $PWD/docs:/data minlag/mermaid-cli:11.17.0 -i /data/diagrams/workflow.mmd -o /data/img/workflow.png -c /data/diagrams/config.json -b white -s 2`
@@ -88,8 +111,8 @@ Regenerate the visuals: diagrams with
 ### Demo on AWS (on demand, no standing infrastructure)
 
 `infra/demo.yaml` runs the same stack on one Graviton EC2 instance for the length of a demo, about $0.30
-for four hours: `deploy/up.sh`, `deploy/tunnel.sh` (UI on localhost over SSM, no open ports),
-`deploy/down.sh`. The instance terminates itself after `MAX_HOURS` in case `down.sh` is forgotten.
+for four hours: `deploy/preflight.sh`, `deploy/up.sh`, `deploy/smoke.sh`, `deploy/tunnel.sh` (Airflow and
+the warehouse on localhost over SSM, no open ports, so the notebook works unchanged), `deploy/down.sh`. The instance terminates itself after `MAX_HOURS` in case `down.sh` is forgotten.
 Runbook, cost table and why there is no cloud schedule: [deploy/README.md](deploy/README.md).
 
 ## What a run shows
@@ -119,15 +142,16 @@ airports); demand peaks on weekday evenings, Thursday 6 pm the busiest hour.
 
 ![Hourly demand heatmap](docs/img/hourly_demand.png)
 
-## Data validation: three layers
+## Data validation: four layers
 
-Validation happens at three points, each with a different job:
+Validation happens at four points, each with a different job:
 
 | Layer | Where | What it checks | On failure |
 |---|---|---|---|
 | **1. Schema contract** | `load_raw` (`include/taxi/load.py`) | Required columns present; names mapped case-insensitively; types cast to the contract; unknown columns logged | Missing required column: task fails before anything is written |
 | **2. Quality gate** | `quality_gate` (`include/taxi/quality.py`, rules in `config.py`) | 7 rules on the loaded month: row count, pickups inside the month, valid zone ids, dropoff after pickup (error); negative fares, missing passenger counts, distances over 200 miles (warn). Every result goes to `audit.dq_results` | Error rule: run fails with no retry, the asset is not updated, dbt never sees the month. Warn rule: recorded and logged |
-| **3. dbt tests** | after each model (`dbt/taxi/models/*.yml`, `macros/tests.sql`, `tests/`) | 18 tests: not-null, unique, accepted values, zone relationships, trip duration range, one row per day×zone, **staging row count equals raw**, **mart trips and revenue reconcile to the fact table** | Downstream models are skipped (`upstream_failed`) |
+| **3. Approval** | `approved_months` (dbt) | A month reaches `fct_trips` only if its latest gate check passed every error rule **and** is newer than its latest load | The month keeps its last approved rows in the marts |
+| **4. dbt tests** | after each model (`dbt/taxi/models/*.yml`, `macros/tests.sql`, `tests/`) | 18 data tests: not-null, unique, accepted values, zone relationships, trip duration range, one row per day×zone, **staging row count equals raw**, **mart trips and revenue reconcile to the fact table**; plus 4 **unit tests** on fixed rows (exclusion reasons, approval, incremental selection) | Downstream models are skipped (`upstream_failed`) |
 
 Staging also labels every row it drops with one `exclusion_reason`, and `mart_data_quality` counts them, so
 "cleaning" is auditable instead of a silent `WHERE`.
@@ -145,8 +169,11 @@ The gate's thresholds come from measuring the files, not from wishing them clean
   lacks a passenger count *exactly* when its payment type is 0 (flex fare): the rising share is flex-fare trips
   growing. Warn rule, not a stop.
 - **The schema drifts:** `airport_fee` (2023) becomes `Airport_fee` (2024), `passenger_count` changes type,
-  and 2025 adds `cbd_congestion_fee` for Manhattan congestion pricing. The contract absorbs the first two and
-  logs the third.
+  and 2025 adds `cbd_congestion_fee` for Manhattan congestion pricing. The contract absorbs the first two; the
+  third was added to the contract, and loading January 2025 added the column to the table (NULL for 2024).
+- **January 2025 tripped both warning rules:** 4.2% negative fares (from 1.3–1.6%) and 15.5% missing
+  passenger counts. The rise is in flex-fare trips from one vendor. The month loaded, and the alert says so:
+  that is the difference between a warn rule and an error rule.
 
 ## Design decisions
 
@@ -161,19 +188,28 @@ The gate's thresholds come from measuring the files, not from wishing them clean
   The project uses no dbt packages (two small generic tests live in `macros/tests.sql`), so runs need no network.
 - **Cosmos with `buildable` test selection.** A test that spans two models (mart reconciles to fact) runs after
   the later one instead of failing with the first.
+- **Approval in the warehouse, not only in the scheduler.** The asset event already keeps dbt from running
+  on a failed month, but another month's event can still start dbt; `approved_months` makes the rule hold
+  whatever triggers the run.
+- **Fault injection by Airflow Variable**, so the failure path can be shown on real data without editing
+  code, and is off unless someone sets it.
+- **Import CTEs in dbt models** (`with stg as (select * from ref(...))`): dbt's `--empty` mode, used to build
+  unit-test parents, wraps each `ref()` in an aliased subquery, so `ref(...) as s` would break it.
 
 ## Layout
 
 ```
-dags/                taxi_ingest.py, taxi_transform.py
-include/taxi/        config (contract, rules), extract, load, quality, alerts, assets
-dbt/taxi/            models/staging, models/marts, seeds/taxi_zone_lookup.csv, macros, tests
+dags/                taxi_ingest.py, taxi_transform.py, taxi_housekeeping.py
+include/taxi/        config (contract, rules), extract, load, quality, faults, alerts, assets
+dbt/taxi/            models/staging (+ approved_months), models/marts, unit tests, seeds, macros, tests, profiles.yml
 tests/               pytest, run inside the Airflow image
-scripts/             make_env.py (.env secrets), charts.py (README charts from the warehouse)
-docs/                data_notes.md (measured source properties), diagrams/*.mmd, img/
+notebooks/           demo.ipynb (+ build_notebook.py, airflow_demo.py REST client, requirements.txt)
+scripts/             make_env.py (.env secrets), ensure_tables.py, charts.py (README charts from the warehouse)
+docs/                DEMO.md (talk track), data_notes.md (measured source properties), diagrams/*.mmd, img/
+.github/workflows/   ci.yml (lint, pytest, dbt unit tests), cloudburn.yml (IaC cost scan)
 docker-compose.yaml  adapted from the official Airflow 3.3.2 compose file
 infra/               demo.yaml (EC2 demo stack), cost.yaml (budget alert); scanned by CloudBurn in CI
-deploy/              up.sh, tunnel.sh, extend.sh, logs.sh, down.sh, deploy_cost.sh; README.md runbook
+deploy/              preflight.sh, up.sh, smoke.sh, tunnel.sh, extend.sh, logs.sh, down.sh, deploy_cost.sh; README.md
 ```
 
 ## Data and license

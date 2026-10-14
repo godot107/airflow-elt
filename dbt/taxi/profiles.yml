@@ -1,0 +1,17 @@
+# For dbt on the command line inside the Airflow image (`make dbt`, `make dbt-unit`, `make docs`).
+# Airflow runs dbt through Cosmos, which builds its own profile from the `warehouse` connection.
+taxi:
+  target: dev
+  outputs:
+    dev: &warehouse
+      type: postgres
+      host: warehouse
+      port: 5432
+      user: warehouse
+      password: "{{ env_var('WAREHOUSE_PASSWORD') }}"
+      dbname: warehouse
+      schema: analytics
+      threads: 4
+    unit:
+      <<: *warehouse
+      threads: 1

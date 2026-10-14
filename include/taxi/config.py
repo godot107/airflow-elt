@@ -7,9 +7,10 @@ WAREHOUSE_CONN_ID = "warehouse"
 RAW_TABLE = "raw.yellow_trips"
 AUDIT_TABLE = "audit.dq_results"
 
-# The raw contract. TLC files drift between years (Airport_fee vs airport_fee, cbd_congestion_fee added in
-# 2025), so the loader maps names case-insensitively, fills missing contract columns with NULL and logs any
-# extras instead of failing or silently widening the table.
+# The raw contract. TLC files drift between years (airport_fee vs Airport_fee, passenger_count double vs int,
+# cbd_congestion_fee added in 2025), so the loader maps names case-insensitively, casts to the contract type,
+# fills missing contract columns with NULL and logs any extras instead of failing or silently widening the
+# table. Widening is a deliberate edit here: add the column, and the next load's DDL adds it to the table.
 COLUMNS = {
     "vendorid": "integer",
     "tpep_pickup_datetime": "timestamp",
@@ -30,6 +31,7 @@ COLUMNS = {
     "total_amount": "numeric(10,2)",
     "congestion_surcharge": "numeric(10,2)",
     "airport_fee": "numeric(10,2)",
+    "cbd_congestion_fee": "numeric(10,2)",      # added 2025-01 (Manhattan congestion pricing); NULL before
 }
 REQUIRED = ["tpep_pickup_datetime", "tpep_dropoff_datetime", "pulocationid", "dolocationid", "fare_amount"]
 
@@ -46,3 +48,12 @@ RULES = [
     ("passenger_null_share", "avg((passenger_count is null)::int)",                                 "<=", 0.15, "warn"),
     ("distance_over_200mi", "avg((trip_distance > 200)::int)",                                      "<=", 0.0005, "warn"),
 ]
+
+# Fault injection for demos (`make demo-bad-month`): an Airflow Variable mapping month -> fault kind.
+# The fault corrupts the source batch as if TLC had shipped a bad file. See taxi/faults.py.
+FAULT_VARIABLE = "taxi_fault"
+
+# Housekeeping (taxi_housekeeping DAG).
+KEEP_DOWNLOADS_DAYS = 7      # files of failed or abandoned runs; a passing month's file is deleted at once
+KEEP_LOG_DAYS = 30
+LOG_DIR = Path("/opt/airflow/logs")

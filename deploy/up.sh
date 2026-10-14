@@ -44,12 +44,16 @@ on_instance "$INSTANCE" "test -f /var/lib/airflow-elt-ready" >/dev/null || {
   echo "Airflow not ready after 15 min; see deploy/logs.sh" >&2; exit 1; }
 
 PASSWORD=$(on_instance "$INSTANCE" "grep ^AIRFLOW_ADMIN_PASSWORD= /opt/airflow-elt/.env | cut -d= -f2")
+WH_PASSWORD=$(on_instance "$INSTANCE" "grep ^WAREHOUSE_PASSWORD= /opt/airflow-elt/.env | cut -d= -f2")
 EXPIRES=$(on_instance "$INSTANCE" "cat /var/lib/demo-expires-at")
 cat <<MSG
 
-Airflow is up. The backfill keeps running for a few more minutes.
-  1. deploy/tunnel.sh             # then open http://localhost:8080
+Airflow is up. The backfill keeps running for a few more minutes (deploy/smoke.sh checks it).
+  1. deploy/tunnel.sh             # Airflow on http://localhost:8080, warehouse on localhost:5433
   2. login: admin / $PASSWORD
+  3. notebook against the cloud stack:
+       export AIRFLOW_PASSWORD='$PASSWORD' WAREHOUSE_PASSWORD='$WH_PASSWORD'
+       jupyter lab notebooks/demo.ipynb
   Self-terminates at $EXPIRES (deploy/extend.sh HOURS to push it back).
   When done: deploy/down.sh
 MSG

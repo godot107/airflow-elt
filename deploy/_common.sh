@@ -26,8 +26,11 @@ out() {
 on_instance() {
   local instance=$1; shift
   local cmd status
+  local params
+  # JSON, not CLI shorthand: the remote command may contain quotes of either kind.
+  params=$(python3 -c 'import json, sys; print(json.dumps({"commands": [sys.argv[1]]}))' "$*")
   cmd=$(aws ssm send-command --instance-ids "$instance" --document-name AWS-RunShellScript \
-    --parameters "commands=[\"$*\"]" --query Command.CommandId --output text)
+    --parameters "$params" --query Command.CommandId --output text)
   while :; do
     status=$(aws ssm get-command-invocation --command-id "$cmd" --instance-id "$instance" \
       --query Status --output text 2>/dev/null || echo Pending)

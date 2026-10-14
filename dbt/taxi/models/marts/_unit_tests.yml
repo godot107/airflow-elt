@@ -1,0 +1,68 @@
+version: 2
+
+unit_tests:
+  - name: fct_trips_incremental_takes_only_reloaded_approved_months
+    description: >-
+      Incremental run. Jan was loaded before fct's last run (skip); Feb and Mar were reloaded since,
+      but only Feb is approved. Excluded rows never reach the fact table.
+    model: fct_trips
+    overrides:
+      macros:
+        is_incremental: true
+    given:
+      - input: this
+        format: csv
+        rows: |
+          source_month,loaded_at
+          2024-01-01,2024-02-15 00:00:00
+      - input: source('raw', 'yellow_trips')
+        format: csv
+        rows: |
+          source_month,loaded_at
+          2024-01-01,2024-02-15 00:00:00
+          2024-02-01,2024-03-15 00:00:00
+          2024-03-01,2024-04-15 00:00:00
+      - input: ref('approved_months')
+        format: csv
+        rows: |
+          source_month
+          2024-01-01
+          2024-02-01
+      - input: ref('stg_yellow_trips')
+        format: csv
+        rows: |
+          source_month,pickup_at,pickup_zone_id,exclusion_reason
+          2024-01-01,2024-01-05 09:00:00,10,
+          2024-02-01,2024-02-05 09:00:00,20,
+          2024-02-01,2024-02-05 10:00:00,21,negative_amount
+          2024-03-01,2024-03-05 09:00:00,30,
+    expect:
+      format: csv
+      rows: |
+        source_month,pickup_zone_id,pickup_hour
+        2024-02-01,20,9
+
+  - name: fct_trips_full_refresh_takes_every_approved_month
+    model: fct_trips
+    overrides:
+      macros:
+        is_incremental: false
+    given:
+      - input: source('raw', 'yellow_trips')
+        rows: []
+      - input: ref('approved_months')
+        format: csv
+        rows: |
+          source_month
+          2024-01-01
+      - input: ref('stg_yellow_trips')
+        format: csv
+        rows: |
+          source_month,pickup_at,pickup_zone_id,exclusion_reason
+          2024-01-01,2024-01-05 09:00:00,10,
+          2024-02-01,2024-02-05 09:00:00,20,
+    expect:
+      format: csv
+      rows: |
+        source_month,pickup_zone_id
+        2024-01-01,10

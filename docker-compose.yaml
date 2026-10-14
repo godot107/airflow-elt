@@ -25,6 +25,7 @@ x-airflow-common:
     - ./include:/opt/airflow/include
     - ./dbt:/opt/airflow/dbt
     - ./tests:/opt/airflow/tests
+    - ./scripts:/opt/airflow/scripts
     - ./data:/opt/airflow/data
     - ./logs:/opt/airflow/logs
     - ./config:/opt/airflow/config
@@ -148,6 +149,19 @@ services:
       _AIRFLOW_WWW_USER_USERNAME: ${AIRFLOW_ADMIN_USER:-admin}
       _AIRFLOW_WWW_USER_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD}
     user: "0:0"
+
+  dbt-docs:                     # make docs -> http://localhost:8081 (profile "docs", off by default)
+    <<: *airflow-common
+    profiles: [docs]
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        cd /opt/airflow/dbt/taxi
+        /home/airflow/dbt-venv/bin/dbt docs generate --profiles-dir . --target-path /tmp/dbt-docs
+        cd /tmp/dbt-docs && exec python -m http.server 8081
+    ports: ["127.0.0.1:8081:8081"]
+    restart: "no"
 
   airflow-cli:                  # docker compose run --rm airflow-cli <airflow args>
     <<: *airflow-common

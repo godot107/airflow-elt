@@ -1,0 +1,7 @@
+# Host-side packages for the demo notebook (Airflow itself runs in Docker).
+jupyterlab==4.6.4
+pandas>=2.2
+matplotlib>=3.9
+psycopg[binary]==3.3.6
+requests>=2.32
+nbformat>=5.10

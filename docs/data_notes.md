@@ -28,6 +28,29 @@ Observations that set the rule thresholds in `include/taxi/config.py`:
   (Manhattan congestion pricing, started 2025-01-05). The loader maps names case-insensitively and logs new
   columns instead of failing or loading them unasked.
 
+## January 2025: both warning rules fire
+
+Loading 2025-01 (3,475,226 trips) passed every error rule but tripped both warn rules, which is what they are
+for: a change worth a look that shouldn't stop the load.
+
+| Rule | 2024 Q1 | 2025-01 | Threshold |
+|---|---|---|---|
+| `negative_fare_share` | 1.3–1.6% | **4.2%** | ≤ 3% (warn) |
+| `passenger_null_share` | 4.7–11.9% | **15.5%** | ≤ 15% (warn) |
+
+- **Negative fares** are up almost fourfold, and the increase is in flex-fare trips (payment type 0):
+  15.7% of them carry a negative fare in 2025-01 against 1.5–3.4% in 2024. Every negative fare that month
+  comes from vendor 2. Staging excludes these rows (`negative_amount`), so 7.8% of the month is dropped
+  against 4.4–5.2% in 2024.
+- **Missing passenger counts** remain exactly the flex-fare trips (540,149 rows, all of payment type 0).
+- **Vendor 7** appears for the first time (1,206 trips); vendors 1, 2 and 6 were already present.
+- **`cbd_congestion_fee`** (Manhattan congestion pricing, from 2025-01-05) is populated on every 2025 row,
+  average $0.49 per trip. It was added to the contract, so the table gained the column on this load; 2024
+  rows have NULL.
+
+Whether the 2025 thresholds should move is a judgment call the audit table now makes visible rather than a
+silent default: raising `negative_fare_share` to 5% would accept the new normal; keeping 3% keeps the alert.
+
 ## What staging excludes (`mart_data_quality`)
 
 `stg_yellow_trips.exclusion_reason` gives every dropped row one reason, checked in order:

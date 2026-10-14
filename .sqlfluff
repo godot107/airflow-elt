@@ -1,0 +1,16 @@
+[sqlfluff]
+dialect = postgres
+templater = jinja
+max_line_length = 120
+# Layout rules that fight the hand-aligned SQL in this repo; correctness and style rules stay on.
+exclude_rules = LT05, ST06
+
+[sqlfluff:templater:jinja]
+apply_dbt_builtins = True
+load_macros_from_path = dbt/taxi/macros
+
+[sqlfluff:rules:capitalisation.keywords]
+capitalisation_policy = lower
+
+[sqlfluff:rules:capitalisation.functions]
+extended_capitalisation_policy = lower
