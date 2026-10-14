@@ -1,0 +1,4 @@
+# Installed into the Airflow image on top of Airflow 3.3.2's constraints (postgres + common-sql providers and
+# pyarrow already ship in the official image).
+astronomer-cosmos==1.15.1
+pytest==8.4.2

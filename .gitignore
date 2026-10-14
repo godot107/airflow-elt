@@ -1,0 +1,10 @@
+.env
+data/
+logs/
+config/airflow.cfg
+config/*.generated
+dbt/taxi/target/
+dbt/taxi/dbt_packages/
+dbt/taxi/logs/
+__pycache__/
+.pytest_cache/

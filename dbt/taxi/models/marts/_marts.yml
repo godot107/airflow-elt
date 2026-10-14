@@ -1,0 +1,61 @@
+version: 2
+
+models:
+  - name: dim_zones
+    description: TLC taxi zones (265), from the published lookup.
+    columns:
+      - name: zone_id
+        data_tests: [unique, not_null]
+
+  - name: fct_trips
+    description: One row per kept trip; see stg_yellow_trips.exclusion_reason for what is dropped.
+    columns:
+      - name: source_month
+        data_tests: [not_null]
+      - name: pickup_zone_id
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_zones')
+                field: zone_id
+      - name: dropoff_zone_id
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_zones')
+                field: zone_id
+      - name: trip_minutes
+        data_tests:
+          - value_between:
+              arguments:
+                min_value: 0
+                max_value: 360
+
+  - name: mart_daily_zone
+    description: Daily trips, revenue, average fare and card tip rate by pickup zone.
+    columns:
+      - name: trips
+        data_tests: [not_null]
+    data_tests:
+      - unique_combination:
+          arguments:
+            columns: [pickup_date, pickup_zone_id]
+      - reconciles_to:
+          arguments:
+            fact: ref('fct_trips')
+            count_col: trips
+            sum_col: revenue
+            fact_sum_col: total_amount
+
+  - name: mart_hourly_demand
+    description: Average trips per hour of week.
+    data_tests:
+      - unique_combination:
+          arguments:
+            columns: [pickup_dow, pickup_hour]
+
+  - name: mart_data_quality
+    description: Raw vs kept rows per month, with counts by exclusion reason.
+    columns:
+      - name: source_month
+        data_tests: [unique, not_null]

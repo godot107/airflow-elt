@@ -1,0 +1,24 @@
+name: taxi
+version: "1.0.0"
+profile: taxi
+model-paths: ["models"]
+seed-paths: ["seeds"]
+test-paths: ["tests"]
+macro-paths: ["macros"]
+clean-targets: ["target", "dbt_packages"]
+
+models:
+  taxi:
+    staging:
+      +schema: staging
+      +materialized: view
+    marts:
+      +schema: marts
+      +materialized: table
+
+seeds:
+  taxi:
+    +schema: reference
+    taxi_zone_lookup:
+      +column_types:
+        LocationID: integer

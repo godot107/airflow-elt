@@ -1,0 +1,17 @@
+version: 2
+
+sources:
+  - name: raw
+    schema: raw
+    description: Loaded by the taxi_ingest DAG, one calendar month per load, replaced on reload.
+    loaded_at_field: loaded_at
+    freshness:
+      warn_after: {count: 120, period: day}     # TLC publishes ~2 months late
+    tables:
+      - name: yellow_trips
+        description: NYC TLC yellow-taxi trip records as published, conformed to a fixed column contract.
+        columns:
+          - name: source_month
+            data_tests: [not_null]
+          - name: tpep_pickup_datetime
+            data_tests: [not_null]

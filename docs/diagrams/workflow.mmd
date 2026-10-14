@@ -1,0 +1,43 @@
+flowchart LR
+    subgraph SRC[Source]
+        TLC[("NYC TLC<br/>monthly Parquet<br/>~3M trips")]
+    end
+    subgraph ING["DAG 1 · taxi_ingest · one run per month"]
+        direction LR
+        W["wait_for_file<br/><i>sensor · reschedule<br/>up to 75 days</i>"] --> D["download<br/><i>atomic · skip if complete</i>"]
+        D --> L["load_raw<br/><i>delete month + COPY<br/>one transaction · pool=2</i>"]
+        L --> Q{"quality_gate<br/><i>7 rules</i>"}
+    end
+    subgraph WH[Postgres warehouse]
+        RAW[(raw.yellow_trips)]
+        AUD[(audit.dq_results)]
+    end
+    subgraph TR["DAG 2 · taxi_transform · dbt via Cosmos"]
+        direction LR
+        S["stg_yellow_trips<br/><i>+ exclusion_reason</i>"] --> F["fct_trips<br/><i>incremental by month</i>"]
+        F --> M1[mart_daily_zone]
+        F --> M2[mart_hourly_demand]
+        S --> M3[mart_data_quality]
+        Z["dim_zones<br/><i>seed</i>"] --> M1
+    end
+    TLC -. "HEAD request" .-> W
+    TLC --> D
+    L --> RAW
+    Q -. "every rule" .-> AUD
+    Q -- "pass" --> A(("asset<br/>raw_yellow_trips"))
+    Q -- "error rule fails" --> STOP["run fails<br/>asset not updated<br/>dbt never runs"]
+    A == "data-aware trigger" ==> S
+    RAW --> S
+
+    classDef dag fill:#e8f1fb,stroke:#2f6db5,color:#0b2545
+    classDef store fill:#fdf6e3,stroke:#b58900,color:#3b2f00
+    classDef bad fill:#fdecea,stroke:#c0392b,color:#5c1a12
+    classDef asset fill:#e9f7ef,stroke:#1e8449,color:#0b3d20
+    class W,D,L,Q,S,F,M1,M2,M3,Z dag
+    class TLC,RAW,AUD store
+    class STOP bad
+    class A asset
+    style SRC fill:#fafafa,stroke:#b0b7c3
+    style ING fill:#f5f8fc,stroke:#8aa4c8
+    style WH fill:#fffdf5,stroke:#d4b85a
+    style TR fill:#f5f8fc,stroke:#8aa4c8

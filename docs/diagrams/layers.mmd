@@ -1,0 +1,46 @@
+erDiagram
+    RAW_YELLOW_TRIPS ||--|| STG_YELLOW_TRIPS : "one view row per raw row"
+    STG_YELLOW_TRIPS ||--o| FCT_TRIPS : "kept if exclusion_reason is null"
+    DIM_ZONES ||--o{ FCT_TRIPS : "pickup / dropoff zone"
+    FCT_TRIPS }o--|| MART_DAILY_ZONE : "aggregated by day x zone"
+    FCT_TRIPS }o--|| MART_HOURLY_DEMAND : "aggregated by weekday x hour"
+    STG_YELLOW_TRIPS }o--|| MART_DATA_QUALITY : "aggregated by month"
+    RAW_YELLOW_TRIPS {
+        date source_month "partition, replaced on reload"
+        timestamptz loaded_at
+        timestamp tpep_pickup_datetime
+        int pulocationid
+        numeric fare_amount
+    }
+    STG_YELLOW_TRIPS {
+        text exclusion_reason "null = kept"
+        float trip_minutes
+    }
+    FCT_TRIPS {
+        date source_month "incremental key"
+        date pickup_date
+        int pickup_hour
+        numeric total_amount
+    }
+    DIM_ZONES {
+        int zone_id PK
+        text borough
+        text zone_name
+    }
+    MART_DAILY_ZONE {
+        date pickup_date
+        int pickup_zone_id
+        int trips
+        numeric revenue
+        float card_tip_rate
+    }
+    MART_HOURLY_DEMAND {
+        int pickup_dow
+        int pickup_hour
+        float avg_trips
+    }
+    MART_DATA_QUALITY {
+        date source_month
+        int raw_rows
+        int kept_rows
+    }

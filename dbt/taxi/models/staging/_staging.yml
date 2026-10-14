@@ -1,0 +1,22 @@
+version: 2
+
+models:
+  - name: stg_yellow_trips
+    description: Raw trips renamed and typed; exclusion_reason is null for trips the marts keep.
+    columns:
+      - name: pickup_at
+        data_tests: [not_null]
+      - name: payment_type
+        description: "TLC dictionary: 0 flex fare, 1 credit card, 2 cash, 3 no charge, 4 dispute, 5 unknown, 6 voided."
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [0, 1, 2, 3, 4, 5, 6]
+              config:
+                severity: warn
+      - name: exclusion_reason
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [pickup_outside_month, dropoff_before_pickup, over_6_hours, negative_amount,
+                         no_charge_dispute_void, implausible_distance]

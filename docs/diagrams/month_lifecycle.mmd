@@ -1,0 +1,21 @@
+flowchart TD
+    start(["Run for month M starts<br/>(scheduled on M+1 day 1, or a backfill)"]) --> pub{"Is M published<br/>by TLC yet?"}
+    pub -- "no" --> wait["Sensor reschedules itself<br/>checks every 6 h, frees its slot"] --> pub
+    pub -- "no, after 75 days" --> late["Sensor times out<br/>run fails, alert"]
+    pub -- "yes" --> dl["Download<br/>(reuse file if already complete)"]
+    dl --> load["BEGIN · DELETE month M · COPY batches · COMMIT"]
+    load -- "transient error" --> retry["Retry with exponential backoff<br/>(rollback leaves raw unchanged)"] --> load
+    load --> gate{"Quality gate"}
+    gate -- "warn rule fails" --> logw["Recorded in audit.dq_results<br/>and the log · run continues"] --> pass
+    gate -- "error rule fails" --> stop["Run fails, no retry<br/>asset not updated · alert"]
+    gate -- "all pass" --> pass["Asset event raw_yellow_trips"]
+    pass --> dbt["taxi_transform: dbt rebuilds<br/>only months reloaded since last run"]
+    dbt -- "a test fails" --> block["Downstream models skipped<br/>(upstream_failed)"]
+    dbt --> done(["Marts current"])
+
+    classDef bad fill:#fdecea,stroke:#c0392b,color:#5c1a12
+    classDef good fill:#e9f7ef,stroke:#1e8449,color:#0b3d20
+    classDef warn fill:#fff4e0,stroke:#d68910,color:#5a3a00
+    class late,stop,block bad
+    class pass,done good
+    class logw,retry,wait warn
