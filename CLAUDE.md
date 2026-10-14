@@ -12,6 +12,16 @@ make psql          # warehouse; also on localhost:5433
 make down          # `make nuke` also drops both Postgres volumes
 ```
 
+## AWS demo deploy
+- `infra/demo.yaml` + `deploy/*.sh` (runbook `deploy/README.md`). Ephemeral by design: up before a demo,
+  down after; **no cloud schedule** (user asked; answer: create/delete beats start/stop for a few-hour demo).
+- Safety net: `shutdown -h +MaxHours` first in UserData + `InstanceInitiatedShutdownBehavior: terminate`.
+- No inbound SG rules; UI via SSM port forwarding (`tunnel.sh`, needs session-manager-plugin, installable
+  without sudo via `dpkg -x`). Tags per shared/TAGGING.md: project=airflow-elt environment=dev component=lab.
+- Not deployed yet as of 2026-10-14 (no aws session while the user was away). cfn-lint + CloudBurn clean.
+- `dbt-core-experimental-parser` is pinned in the Dockerfile: dbt-core 1.12 pulls it, it is an sdist that
+  downloads a sha256-checked binary from dbt Labs' GitHub releases at build time (x86_64 + aarch64).
+
 ## Layout
 - `dags/taxi_ingest.py`: monthly interval, sensor (reschedule) → download → load_raw (pool `warehouse_load`=2) →
   quality_gate (outlet asset `raw_yellow_trips`).

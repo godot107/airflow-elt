@@ -1,0 +1,30 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  airflow-elt cost guard: monthly AWS Budget on tag project=airflow-elt. Long-lived and free (the
+  first two budgets in an account cost nothing); deploy once, keep it when demo stacks come and go.
+
+Parameters:
+  BudgetUsd:
+    Type: Number
+    Default: 5
+    Description: A few demos a month cost well under $1 each; $5 means something was left running.
+  AlertEmail:
+    Type: String
+    Default: aws@willieman.com
+
+Resources:
+  MonthlyBudget:
+    Type: AWS::Budgets::Budget
+    Properties:
+      Budget:
+        BudgetName: airflow-elt-monthly
+        BudgetType: COST
+        TimeUnit: MONTHLY
+        BudgetLimit: { Amount: !Ref BudgetUsd, Unit: USD }
+        CostFilters:
+          TagKeyValue: ["user:project$airflow-elt"]
+      NotificationsWithSubscribers:
+        - Notification: { NotificationType: ACTUAL, ComparisonOperator: GREATER_THAN, Threshold: 50 }
+          Subscribers: [{ SubscriptionType: EMAIL, Address: !Ref AlertEmail }]
+        - Notification: { NotificationType: FORECASTED, ComparisonOperator: GREATER_THAN, Threshold: 100 }
+          Subscribers: [{ SubscriptionType: EMAIL, Address: !Ref AlertEmail }]

@@ -1,0 +1,154 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  airflow-elt demo: one Graviton EC2 instance that clones the public repo, starts the Airflow +
+  warehouse Docker Compose stack and backfills a few months, for the length of a demo. No inbound
+  ports at all: the UI is reached through an SSM port-forwarding tunnel (deploy/tunnel.sh), shell
+  through SSM Session Manager. The instance terminates itself after MaxHours as a safety net;
+  deploy/down.sh deletes everything.
+
+Parameters:
+  GitRef:
+    Type: String
+    Default: main
+    Description: Branch, tag or commit of github.com/godot107/airflow-elt to deploy.
+    AllowedPattern: "^[A-Za-z0-9._/-]+$"
+
+  BackfillFrom:
+    Type: String
+    Default: "2024-01-01"
+    AllowedPattern: "^$|^\\d{4}-\\d{2}-01$"
+    Description: First month to load at boot (YYYY-MM-01). Empty = start Airflow with no data.
+
+  BackfillTo:
+    Type: String
+    Default: "2024-03-31"
+    AllowedPattern: "^$|^\\d{4}-\\d{2}-\\d{2}$"
+    Description: Last day of the last month to load at boot.
+
+  MaxHours:
+    Type: Number
+    Default: 4
+    MinValue: 1
+    MaxValue: 24
+    Description: >-
+      The instance shuts down (and terminates, taking its disk with it) this many hours after boot,
+      even if nobody runs deploy/down.sh. Extend a running demo with deploy/extend.sh.
+
+  InstanceType:
+    Type: String
+    Default: t4g.large
+    AllowedValues: [t4g.medium, t4g.large, t4g.xlarge]
+    Description: >-
+      Graviton (arm64). Airflow's five services, two Postgres and a dbt run need ~5 GB; t4g.large
+      (8 GB) with a 2 GB swapfile is comfortable. t4g.medium (4 GB) works for a no-backfill demo.
+
+  ImageId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/canonical/ubuntu/server/24.04/stable/current/arm64/hvm/ebs-gp3/ami-id
+    Description: >-
+      Latest Ubuntu 24.04 arm64 at stack creation. Unpinned on purpose: the stack lives for one demo,
+      so there is no in-place update for a new AMI to disrupt.
+
+Resources:
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: ec2.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore   # Session Manager + port forwarding only
+
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles: [!Ref InstanceRole]
+
+  # No inbound rules: nothing listens publicly. Default egress (GitHub, Docker Hub, PyPI, the TLC CDN,
+  # SSM endpoints) in the default VPC.
+  NoIngressSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: No inbound rules; UI via SSM port forwarding.
+
+  Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref ImageId
+      InstanceType: !Ref InstanceType
+      IamInstanceProfile: !Ref InstanceProfile
+      SecurityGroupIds: [!GetAtt NoIngressSecurityGroup.GroupId]
+      # `shutdown` from inside (the MaxHours timer) terminates instead of stopping: no disk left behind.
+      InstanceInitiatedShutdownBehavior: terminate
+      CreditSpecification:
+        CPUCredits: standard          # past the baseline the demo slows down instead of billing surplus CPU
+      MetadataOptions:
+        HttpTokens: required          # IMDSv2 only
+        HttpPutResponseHopLimit: 1    # containers can't reach the instance role's credentials
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs: { VolumeSize: 30, VolumeType: gp3, Encrypted: true, DeleteOnTermination: true }
+      Tags:
+        - { Key: Name, Value: !Ref AWS::StackName }
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -euxo pipefail
+          exec > >(tee /var/log/bootstrap.log) 2>&1
+          export DEBIAN_FRONTEND=noninteractive
+
+          # Safety net first, so it holds even if the rest of bootstrap fails.
+          shutdown -h +$(( ${MaxHours} * 60 )) "airflow-elt demo: MaxHours=${MaxHours} reached"
+          date -u -d "+${MaxHours} hours" +%FT%TZ > /var/lib/demo-expires-at
+
+          if [ ! -f /swapfile ]; then
+            fallocate -l 2G /swapfile && chmod 600 /swapfile
+            mkswap /swapfile && swapon /swapfile
+          fi
+
+          apt-get update
+          apt-get install -y ca-certificates curl git make
+          install -m 0755 -d /etc/apt/keyrings
+          curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+          chmod a+r /etc/apt/keyrings/docker.asc
+          echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu noble stable" \
+            > /etc/apt/sources.list.d/docker.list
+          apt-get update
+          apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+          echo '{"log-driver":"json-file","log-opts":{"max-size":"10m","max-file":"3"}}' > /etc/docker/daemon.json
+          systemctl enable --now docker
+          systemctl restart docker
+          usermod -aG docker ubuntu
+
+          APP=/opt/airflow-elt
+          git clone https://github.com/godot107/airflow-elt.git "$APP"
+          git -C "$APP" checkout "${GitRef}"
+          chown -R ubuntu:ubuntu "$APP"
+          cd "$APP"
+          sudo -u ubuntu python3 scripts/make_env.py > .env      # random secrets, AIRFLOW_UID=1000
+          chmod 600 .env && chown ubuntu:ubuntu .env
+
+          docker compose up -d --build --wait
+          touch /var/lib/airflow-elt-ready                       # deploy/up.sh waits for this
+
+          if [ -n "${BackfillFrom}" ]; then
+            make backfill FROM=${BackfillFrom} TO=${BackfillTo}
+          fi
+          touch /var/lib/airflow-elt-backfill-started
+
+Outputs:
+  InstanceId:
+    Value: !Ref Instance
+  ExpiresAfterHours:
+    Value: !Ref MaxHours
+  TunnelCommand:
+    Description: Forward the Airflow UI to http://localhost:8080 (needs session-manager-plugin).
+    Value: !Sub >-
+      aws ssm start-session --target ${Instance} --region ${AWS::Region}
+      --document-name AWS-StartPortForwardingSession
+      --parameters portNumber=8080,localPortNumber=8080
+  ShellCommand:
+    Value: !Sub "aws ssm start-session --target ${Instance} --region ${AWS::Region}"

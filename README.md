@@ -85,6 +85,13 @@ Regenerate the visuals: diagrams with
 `docker run --rm -u $(id -u):$(id -g) -v $PWD/docs:/data minlag/mermaid-cli:11.17.0 -i /data/diagrams/workflow.mmd -o /data/img/workflow.png -c /data/diagrams/config.json -b white -s 2`
 (same for `month_lifecycle`, `layers`), charts with `python scripts/charts.py` (needs pandas + matplotlib).
 
+### Demo on AWS (on demand, no standing infrastructure)
+
+`infra/demo.yaml` runs the same stack on one Graviton EC2 instance for the length of a demo, about $0.30
+for four hours: `deploy/up.sh`, `deploy/tunnel.sh` (UI on localhost over SSM, no open ports),
+`deploy/down.sh`. The instance terminates itself after `MAX_HOURS` in case `down.sh` is forgotten.
+Runbook, cost table and why there is no cloud schedule: [deploy/README.md](deploy/README.md).
+
 ## What a run shows
 
 Backfilling January–March 2024 (`make backfill FROM=2024-01-01 TO=2024-03-31`):
@@ -165,6 +172,8 @@ tests/               pytest, run inside the Airflow image
 scripts/             make_env.py (.env secrets), charts.py (README charts from the warehouse)
 docs/                data_notes.md (measured source properties), diagrams/*.mmd, img/
 docker-compose.yaml  adapted from the official Airflow 3.3.2 compose file
+infra/               demo.yaml (EC2 demo stack), cost.yaml (budget alert); scanned by CloudBurn in CI
+deploy/              up.sh, tunnel.sh, extend.sh, logs.sh, down.sh, deploy_cost.sh; README.md runbook
 ```
 
 ## Data and license
