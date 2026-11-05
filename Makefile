@@ -4,7 +4,7 @@ RUN := $(COMPOSE) run --rm airflow-cli
 FROM ?= 2024-01-01
 TO   ?= 2024-06-30
 
-.PHONY: env up down nuke test dbt dbt-unit check lint docs docs-down demo-bad-month demo-recover backfill psql logs notebook
+.PHONY: env up down nuke test dbt dbt-unit check lint docs docs-down demo-bad-month demo-recover backfill psql logs notebook semantic-setup mf semantic-check
 
 env:            ## write .env with random secrets (won't overwrite)
 	@test -f .env && echo ".env exists, leaving it" || python3 scripts/make_env.py > .env
@@ -53,6 +53,17 @@ demo-bad-month: ## load MONTH with a corrupted source (FAULT=shift_pickups|bad_z
 demo-recover:   ## "fix the source" (drop the fault) and rerun the failed month from load_raw
 	$(RUN) airflow variables delete taxi_fault
 	$(RUN) airflow tasks clear taxi_ingest -t "load_raw" -s $(MONTH)-01 -e $(MONTH)-01 -d -y
+
+semantic-setup: ## host venv (.venv-mf) with the MetricFlow CLI for the semantic layer
+	python3 -m venv .venv-mf && .venv-mf/bin/pip install -q -r requirements-semantic.txt
+
+mf:             ## query metrics by name: make mf ARGS="query --metrics trips,revenue --group-by metric_time__month"
+	@set -a && . ./.env && set +a && cd dbt/taxi && DBT_TARGET=host ../../.venv-mf/bin/mf $(ARGS)
+
+semantic-check: ## validate the semantic layer against the warehouse and prove it matches the marts
+	@set -a && . ./.env && set +a && cd dbt/taxi && DBT_TARGET=host ../../.venv-mf/bin/dbt build --select metricflow_time_spine --profiles-dir . --quiet \
+	  && DBT_TARGET=host ../../.venv-mf/bin/mf validate-configs 2>&1 | grep -E "ERRORS|ERROR:" | sed "s/.*[✔✖] //"
+	@set -a && . ./.env && set +a && .venv-mf/bin/python scripts/check_semantic_layer.py
 
 notebook:       ## the demo notebook (host Python with jupyter, pandas, matplotlib)
 	jupyter lab notebooks/demo.ipynb

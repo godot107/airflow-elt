@@ -1,0 +1,6 @@
+# Host-side semantic layer CLI (make semantic-setup installs this into .venv-mf). Kept out of the Airflow
+# image: MetricFlow is a query tool for consumers, not part of the pipeline.
+dbt-core==1.12.5
+dbt-postgres==1.11.0
+dbt-metricflow==0.15.0
+metricflow==0.213.0

@@ -175,6 +175,45 @@ The gate's thresholds come from measuring the files, not from wishing them clean
   passenger counts. The rise is in flex-fare trips from one vendor. The month loaded, and the alert says so:
   that is the difference between a warn rule and an error rule.
 
+## Semantic layer: one definition per metric
+
+The marts above hard-code their measures in SQL. That works until the second dashboard defines "revenue" or
+"tip rate" slightly differently, and two reports disagree in a meeting. A **semantic layer** fixes this by
+defining each business measure once, with its joins and filters, and letting every consumer ask for it by
+name. This repo adds one with dbt's open-source **MetricFlow** (`dbt/taxi/models/semantic/_semantic.yml`):
+
+| Piece | What it holds |
+|---|---|
+| Semantic models | `trips` on `fct_trips`, `pickup_zones` / `dropoff_zones` on `dim_zones` (joined through the pickup and dropoff zone entities), `data_quality` on `mart_data_quality` |
+| Metrics | `trips`, `revenue`, `revenue_per_trip`, `avg_fare`, `avg_miles`, `card_tip_rate` (card trips only, since cash tips are not recorded), `trips_mtd` (month to date), `kept_share` (data-quality health) |
+| Time spine | `metricflow_time_spine`, a daily calendar for cumulative metrics |
+
+Asking a question is then one line, with no SQL and no chance of re-deriving a measure wrong:
+
+```bash
+make semantic-setup   # one-time: host venv with the MetricFlow CLI (requirements-semantic.txt)
+make mf ARGS="query --metrics trips,revenue_per_trip --group-by pickup_zone__borough --order -trips --limit 3"
+```
+
+```
+pickup_zone__borough       trips    revenue_per_trip
+Manhattan               23486153             24.1176
+Queens                   2279721             72.416
+Brooklyn                  400649             34.6533
+```
+
+**Certified, not just defined.** `make semantic-check` validates every semantic model, dimension, entity,
+measure and metric against the live warehouse, then runs `scripts/check_semantic_layer.py`, which asks
+MetricFlow for the metrics by name and recomputes the same numbers from the hand-written marts: trips and
+revenue by month and borough against `mart_daily_zone` (64 groups), card tip rate and revenue per trip by
+month against `fct_trips`, and the kept share against `mart_data_quality`. All match. If someone edits a
+metric definition or a mart, the two stop agreeing and the check fails, so a definition can't drift silently.
+
+MetricFlow is a query tool for consumers, so it runs from a host venv rather than inside the Airflow image;
+the pipeline itself only builds the time spine, as one more dbt model. One known quirk: MetricFlow 0.213
+warns that `trips_mtd` has "both a measure and a metric" even though only a measure is set (dbt 1.12 fills in
+the other field itself); the numbers are correct (February 29's month-to-date equals February's total).
+
 ## Design decisions
 
 - **LocalExecutor**, not Celery: a single machine needs no Redis or worker containers, and the scheduling
@@ -201,10 +240,10 @@ The gate's thresholds come from measuring the files, not from wishing them clean
 ```
 dags/                taxi_ingest.py, taxi_transform.py, taxi_housekeeping.py
 include/taxi/        config (contract, rules), extract, load, quality, faults, alerts, assets
-dbt/taxi/            models/staging (+ approved_months), models/marts, unit tests, seeds, macros, tests, profiles.yml
+dbt/taxi/            models/staging (+ approved_months), models/marts, models/semantic (MetricFlow), unit tests, seeds, macros, tests, profiles.yml
 tests/               pytest, run inside the Airflow image
 notebooks/           demo.ipynb (+ build_notebook.py, airflow_demo.py REST client, requirements.txt)
-scripts/             make_env.py (.env secrets), ensure_tables.py, charts.py (README charts from the warehouse)
+scripts/             make_env.py (.env secrets), ensure_tables.py, charts.py (README charts), check_semantic_layer.py
 docs/                DEMO.md (talk track), data_notes.md (measured source properties), diagrams/*.mmd, img/
 .github/workflows/   ci.yml (lint, pytest, dbt unit tests), cloudburn.yml (IaC cost scan)
 docker-compose.yaml  adapted from the official Airflow 3.3.2 compose file

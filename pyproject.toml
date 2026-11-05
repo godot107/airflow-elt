@@ -3,7 +3,7 @@
 line-length = 120
 target-version = "py312"
 src = ["include", "dags", "tests", "scripts"]
-extend-exclude = ["dbt/taxi/target", "logs", "data"]
+extend-exclude = ["dbt/taxi/target", "logs", "data", ".venv-mf"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "BLE", "SIM"]

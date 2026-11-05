@@ -73,3 +73,11 @@ breaks/recovers MONTH_BAD on the live stack. REST client: `notebooks/airflow_dem
   first parent and fails because the second doesn't exist yet.
 - Postgres provider 7.x hook returns **psycopg 3** connections (`cursor.copy`, not `copy_expert`); `load._copy`
   handles both. Tests must use the hook, not raw psycopg2.
+
+## Semantic layer (2026-11-05)
+- `dbt/taxi/models/semantic/`: MetricFlow semantic models + metrics + `metricflow_time_spine` (schema marts).
+- MetricFlow runs from host venv `.venv-mf` (`make semantic-setup`, gitignored), profile target `host`
+  (localhost:5433) via `DBT_TARGET=host`. Not in the Airflow image.
+- `make semantic-check` = validate-configs against the warehouse + `scripts/check_semantic_layer.py`
+  (metrics must equal the marts). `make mf ARGS="query ..."` for ad-hoc queries.
+- dbt 1.12 rejects `metric:` on cumulative metrics; keep `measure:` (one harmless MetricFlow warning).

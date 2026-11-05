@@ -1,0 +1,204 @@
+version: 2
+
+# The semantic layer: every business measure is defined once here, and every consumer (BI tool, notebook,
+# `mf query`) asks for metrics by name instead of re-writing the SQL. tests/test_semantic_layer.py checks
+# the metrics reproduce the hand-written marts, so a definition can't drift silently.
+
+models:
+  - name: metricflow_time_spine
+    description: Daily date spine (2023-2027) for cumulative metrics.
+    time_spine:
+      standard_granularity_column: date_day
+    columns:
+      - name: date_day
+        granularity: day
+        data_tests: [unique, not_null]
+
+semantic_models:
+  - name: trips
+    description: One row per kept trip from gate-approved months.
+    model: ref('fct_trips')
+    primary_entity: trip
+    defaults:
+      agg_time_dimension: pickup_date
+    entities:
+      - name: pickup_zone
+        type: foreign
+        expr: pickup_zone_id
+      - name: dropoff_zone
+        type: foreign
+        expr: dropoff_zone_id
+    dimensions:
+      - name: pickup_date
+        type: time
+        type_params:
+          time_granularity: day
+      - name: pickup_hour
+        type: categorical
+      - name: pickup_dow
+        type: categorical
+        description: ISO day of week, 1 = Monday.
+      - name: payment_type
+        type: categorical
+        description: TLC code; 1 = credit card, 2 = cash.
+      - name: is_card
+        type: categorical
+        expr: payment_type = 1
+    measures:
+      - name: trip_count
+        agg: sum
+        expr: "1"
+      - name: revenue_total
+        description: Total charged to the passenger, all fees included.
+        agg: sum
+        expr: total_amount
+      - name: fare_total
+        agg: sum
+        expr: fare_amount
+      - name: miles_total
+        agg: sum
+        expr: trip_miles
+      - name: card_tip_total
+        description: Tips on card trips only; cash tips are not recorded.
+        agg: sum
+        expr: case when payment_type = 1 then tip_amount end
+      - name: card_fare_total
+        agg: sum
+        expr: case when payment_type = 1 then fare_amount end
+
+  - name: pickup_zones
+    description: TLC taxi zones, joined as the pickup location.
+    model: ref('dim_zones')
+    entities:
+      - name: pickup_zone
+        type: primary
+        expr: zone_id
+    dimensions:
+      - name: borough
+        type: categorical
+      - name: zone_name
+        type: categorical
+      - name: service_zone
+        type: categorical
+
+  - name: dropoff_zones
+    description: TLC taxi zones, joined as the dropoff location.
+    model: ref('dim_zones')
+    entities:
+      - name: dropoff_zone
+        type: primary
+        expr: zone_id
+    dimensions:
+      - name: borough
+        type: categorical
+      - name: zone_name
+        type: categorical
+
+  - name: data_quality
+    description: Rows the pipeline kept and dropped, per source month.
+    model: ref('mart_data_quality')
+    primary_entity: source_month_key
+    defaults:
+      agg_time_dimension: source_month
+    dimensions:
+      - name: source_month
+        type: time
+        type_params:
+          time_granularity: month
+    measures:
+      - name: raw_rows
+        agg: sum
+      - name: kept_rows
+        agg: sum
+
+metrics:
+  - name: trips
+    label: Trips
+    description: Kept trips from gate-approved months.
+    type: simple
+    type_params:
+      measure: trip_count
+
+  - name: revenue
+    label: Revenue
+    description: Total charged to passengers (fare, tips, tolls, fees).
+    type: simple
+    type_params:
+      measure: revenue_total
+
+  - name: revenue_per_trip
+    label: Revenue per trip
+    type: ratio
+    type_params:
+      numerator: revenue
+      denominator: trips
+
+  - name: avg_fare
+    label: Average fare
+    type: ratio
+    type_params:
+      numerator: fare_total
+      denominator: trips
+
+  - name: avg_miles
+    label: Average trip miles
+    type: ratio
+    type_params:
+      numerator: miles_total
+      denominator: trips
+
+  - name: card_tip_rate
+    label: Card tip rate
+    description: Tips divided by fares, card trips only (cash tips are not recorded).
+    type: ratio
+    type_params:
+      numerator: card_tip_total
+      denominator: card_fare_total
+
+  - name: trips_mtd
+    label: Trips, month to date
+    type: cumulative
+    type_params:
+      measure: trip_count
+      cumulative_type_params:
+        grain_to_date: month
+
+  - name: kept_share
+    label: Share of raw rows kept
+    description: Data-quality health; 1 minus the share the pipeline excluded.
+    type: ratio
+    type_params:
+      numerator: kept_rows
+      denominator: raw_rows
+
+  # Hidden building blocks for the ratios (ratio metrics take metrics, not measures).
+  - name: fare_total
+    label: Fare total
+    type: simple
+    type_params:
+      measure: fare_total
+  - name: miles_total
+    label: Miles total
+    type: simple
+    type_params:
+      measure: miles_total
+  - name: card_tip_total
+    label: Card tip total
+    type: simple
+    type_params:
+      measure: card_tip_total
+  - name: card_fare_total
+    label: Card fare total
+    type: simple
+    type_params:
+      measure: card_fare_total
+  - name: raw_rows
+    label: Raw rows
+    type: simple
+    type_params:
+      measure: raw_rows
+  - name: kept_rows
+    label: Kept rows
+    type: simple
+    type_params:
+      measure: kept_rows

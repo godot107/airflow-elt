@@ -15,3 +15,8 @@ taxi:
     unit:
       <<: *warehouse
       threads: 1
+    # From the host (MetricFlow CLI in .venv-mf): the warehouse is published on localhost:5433.
+    host:
+      <<: *warehouse
+      host: localhost
+      port: 5433
