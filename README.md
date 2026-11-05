@@ -22,6 +22,7 @@ rerun, backfilled, fed late or fed bad data:
 | Downstream should run when data changes, not at 2 a.m. | **Data-aware scheduling:** the transform DAG is triggered by the `raw_yellow_trips` asset, which only a passing month updates. |
 | Ten backfill months hit the database at once | A **pool** caps concurrent bulk loads at 2. |
 | A transform silently drops rows | **dbt tests after each model** (Cosmos), including staging-matches-raw and mart-reconciles-to-fact, plus **dbt unit tests** of the cleaning, approval and incremental logic. |
+| Two reports define "revenue" differently | A **certified semantic layer**: metrics defined once (MetricFlow, served by Cube with row-level security to Superset dashboards) and checked against the marts on demand. |
 | A change breaks something | **CI on every push:** ruff and sqlfluff, pytest, and dbt unit tests against throwaway Postgres containers. |
 
 **Demo it:** [`notebooks/demo.ipynb`](notebooks/demo.ipynb) drives the whole story through Airflow's REST API
@@ -214,6 +215,61 @@ the pipeline itself only builds the time spine, as one more dbt model. One known
 warns that `trips_mtd` has "both a measure and a metric" even though only a measure is set (dbt 1.12 fills in
 the other field itself); the numbers are correct (February 29's month-to-date equals February's total).
 
+## BI add-on: certified semantic model, row-level security, dashboards, adoption
+
+MetricFlow proves the definitions; the BI add-on serves them to people, the way a governed self-service
+analytics program does. It is optional (`make bi-up`, Docker profile `bi`; `make up` alone is unchanged)
+and all open source:
+
+```mermaid
+flowchart LR
+    W[(Postgres warehouse<br/>marts)] -->|read-only role| C[Cube<br/>semantic model, RLS, rollups]
+    C -->|Postgres-wire SQL API| S[Superset<br/>certified datasets + dashboard]
+    S -->|usage log| A[bi_usage DAG] --> M[(mart_bi_adoption)]
+    MF[MetricFlow definitions] -.->|make bi-check: must agree| C
+```
+
+| Piece | What it does |
+|---|---|
+| **Cube semantic model** (`bi/cube/model/`) | The same 8 metrics and zone joins as MetricFlow, published through two certified **views** (`taxi_operations`, `data_health`) so BI tools see flat tables with the joins already resolved and only business members exposed. Cube connects as `cube_reader`, a role that can read the marts and nothing else. |
+| **Row-level security** (`bi/cube/cube.js`) | Enforced once, in the semantic layer: the `queens_analyst` login gets every trip query filtered to Queens, whether it asks by borough or for a grand total; a caller with no role gets nothing. |
+| **Rollups** | A month x borough pre-aggregation in Cube Store. The dashboard-shaped query takes **about 20 ms** from the rollup (median of 5 uncached reads) vs **4.4 s** for the same aggregate on Postgres. |
+| **Superset 6.1** (`bi/bootstrap_superset.py`) | Connects to Cube's SQL API. Datasets, their metrics (`MEASURE(...)`, so nobody re-aggregates by hand) and the "Taxi operations" dashboard carry Superset's **certified** badge. The "Taxi Viewer" role opens that one dashboard and nothing else: no datasets, no database connections, no SQL Lab. |
+| **Adoption KPIs** (`dags/bi_usage.py`, `mart_bi_adoption`) | A daily DAG copies Superset's usage log into the warehouse (incremental by log id, so reruns never duplicate) and dbt builds active viewers, active makers, dashboard views, chart loads, the **share of chart loads that are certified**, and uncertified charts in use on certified data (candidates to certify or consolidate). |
+
+![Taxi operations dashboard in Superset, built on the certified Cube views](docs/img/superset_dashboard.png)
+
+**Certified means checked.** `make bi-check` (`scripts/check_bi.py`) fails on any of these:
+
+- **Three-way agreement:** Cube = MetricFlow = the marts for trips and revenue by month and borough (64
+  groups), the four ratio metrics by month, and the kept share.
+- **Row-level security** through both Cube APIs (REST and the SQL API Superset uses), including the
+  grand-total case and the no-role refusal.
+- **Rollup use:** the month x borough query is answered by the `month_borough` pre-aggregation.
+- **Superset governance:** datasets, metrics and dashboard certified; the viewer's access is exactly the
+  one dashboard.
+- **Adoption mart consistency.**
+
+**About the adoption numbers.** The users are demo accounts (`bi/simulate_usage.py`: three viewers open the
+dashboard in a real headless browser, and a "citizen developer" builds an uncertified chart on the certified
+dataset and a personal dashboard). Every event is real Superset telemetry, timestamped when it happened;
+nothing is written to the log directly or backdated. The first day measured 4 viewers, 1 maker, 7 dashboard
+views and 43 chart loads, 98% of them certified: 6 opens of the certified dashboard x 7 charts, plus the
+maker's one uncertified chart. The point is the measurement pipeline, not the counts.
+
+```bash
+make bi-up        # secrets, Cube + Cube Store + Superset, read-only role, bootstrap (dashboard at :8088)
+python bi/simulate_usage.py   # optional demo traffic (shared venv with Playwright); then trigger bi_usage
+make bi-check     # certify everything above
+make bi-down
+```
+
+Decisions worth knowing: TLC trips have no natural id, and Cube needs a primary key to guard against join
+fan-out, so the `taxi_trips` cube uses Postgres `ctid` (unique within a query, which is all Cube uses it
+for). The cube is named `taxi_trips`, not `trips`, because a measure named like its cube breaks Cube's
+member resolution. Superset runs without Redis or Celery (one machine, synchronous queries), and the BI dbt
+models are tagged `bi` and excluded from `taxi_transform`, so the add-on can never break the taxi pipeline.
+
 ## Design decisions
 
 - **LocalExecutor**, not Celery: a single machine needs no Redis or worker containers, and the scheduling
@@ -238,12 +294,14 @@ the other field itself); the numbers are correct (February 29's month-to-date eq
 ## Layout
 
 ```
-dags/                taxi_ingest.py, taxi_transform.py, taxi_housekeeping.py
+dags/                taxi_ingest.py, taxi_transform.py, taxi_housekeeping.py, bi_usage.py (BI add-on)
 include/taxi/        config (contract, rules), extract, load, quality, faults, alerts, assets
+include/bi/          usage.py (Superset usage log -> warehouse)
+bi/                  cube/ (semantic model, views, RLS), superset/ (image, config), bootstrap, simulate_usage, screenshots
 dbt/taxi/            models/staging (+ approved_months), models/marts, models/semantic (MetricFlow), unit tests, seeds, macros, tests, profiles.yml
 tests/               pytest, run inside the Airflow image
 notebooks/           demo.ipynb (+ build_notebook.py, airflow_demo.py REST client, requirements.txt)
-scripts/             make_env.py (.env secrets), ensure_tables.py, charts.py (README charts), check_semantic_layer.py
+scripts/             make_env.py (.env secrets), ensure_tables.py, charts.py (README charts), check_semantic_layer.py, check_bi.py
 docs/                DEMO.md (talk track), data_notes.md (measured source properties), diagrams/*.mmd, img/
 .github/workflows/   ci.yml (lint, pytest, dbt unit tests), cloudburn.yml (IaC cost scan)
 docker-compose.yaml  adapted from the official Airflow 3.3.2 compose file

@@ -18,6 +18,10 @@ models:
     semantic:
       +schema: marts
       +materialized: table
+    bi:                       # BI adoption (bi_usage DAG); excluded from taxi_transform
+      +tags: [bi]
+      +schema: marts
+      +materialized: table
 
 seeds:
   taxi:

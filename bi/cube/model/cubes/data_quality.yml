@@ -1,0 +1,24 @@
+cubes:
+  - name: data_quality
+    title: Data quality
+    description: Rows the pipeline kept and dropped per source month (marts.mart_data_quality).
+    sql_table: marts.mart_data_quality
+    dimensions:
+      - name: source_month
+        sql: source_month
+        type: time
+        primary_key: true
+        public: true
+    measures:
+      - name: raw_rows
+        sql: raw_rows
+        type: sum
+      - name: kept_rows
+        sql: kept_rows
+        type: sum
+      - name: kept_share
+        title: Share of raw rows kept
+        description: Data-quality health; 1 minus the share the pipeline excluded.
+        sql: "{kept_rows}::float / NULLIF({raw_rows}, 0)"
+        type: number
+        format: percent

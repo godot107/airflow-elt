@@ -15,6 +15,12 @@ sources:
             data_tests: [not_null]
           - name: tpep_pickup_datetime
             data_tests: [not_null]
+      - name: bi_usage_events
+        description: Superset usage log, copied by the bi_usage DAG (include/bi/usage.py); BI add-on only.
+        freshness: null
+        columns:
+          - name: log_id
+            data_tests: [unique, not_null]
 
   - name: audit
     schema: audit

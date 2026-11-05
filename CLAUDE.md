@@ -81,3 +81,17 @@ breaks/recovers MONTH_BAD on the live stack. REST client: `notebooks/airflow_dem
 - `make semantic-check` = validate-configs against the warehouse + `scripts/check_semantic_layer.py`
   (metrics must equal the marts). `make mf ARGS="query ..."` for ad-hoc queries.
 - dbt 1.12 rejects `metric:` on cumulative metrics; keep `measure:` (one harmless MetricFlow warning).
+
+## BI add-on (2026-11-05): Cube v1.8.19 + Cube Store + Superset 6.1.0 (compose profile `bi`)
+- `make bi-up` (bi-env appends missing secrets to .env via `make_env.py --missing`; creates read-only role
+  `cube_reader` from bi/warehouse_reader.sql; runs bi/bootstrap_superset.py). `make bi-check` = scripts/check_bi.py.
+- Cube: REST :4000 (JWT HS256 with CUBEJS_API_SECRET, payload {role, borough}), SQL API :15432 (logins
+  CUBE_SQL_* in .env). RLS in `bi/cube/cube.js` queryRewrite; views filter on `taxi_operations.pickup_zones_borough`.
+- Gotchas: cube named `trips` with measure `trips` -> "'undefined' not found for path 'trips'" (renamed
+  `taxi_trips`); fct_trips has no PK -> `ctid` primary key; Superset 6 image has no DB drivers (Dockerfile adds
+  psycopg2-binary via uv); metric certification goes in metric `extra` JSON (no certified_by field on metrics).
+- Superset users: admin (SUPERSET_ADMIN_PASSWORD); demo viewers ops_manager/finance_analyst/dispatch_lead
+  (Gamma + "Taxi Viewer", DASHBOARD_RBAC) and maker citizen_dev (Alpha); their password = admin pw + "-<user>".
+- bi_usage DAG (@daily) skips when superset-db is unreachable; BI dbt models tagged `bi`, excluded from taxi_transform.
+- Screenshots: `bi/screenshots.py` (shared workspace venv has Playwright). Data now also has 2026-09
+  (live interval ran when the stack restarted on 2026-11-05).

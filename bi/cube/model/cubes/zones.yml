@@ -1,0 +1,37 @@
+cubes:
+  - name: pickup_zones
+    title: Pickup zone
+    description: TLC taxi zones (marts.dim_zones), joined as the pickup location.
+    sql_table: marts.dim_zones
+    dimensions:
+      - name: zone_id
+        sql: zone_id
+        type: number
+        primary_key: true
+        public: true
+      - name: borough
+        sql: borough
+        type: string
+      - name: zone_name
+        sql: zone_name
+        type: string
+      - name: service_zone
+        sql: service_zone
+        type: string
+
+  - name: dropoff_zones
+    title: Dropoff zone
+    description: TLC taxi zones (marts.dim_zones), joined as the dropoff location.
+    sql_table: marts.dim_zones
+    dimensions:
+      - name: zone_id
+        sql: zone_id
+        type: number
+        primary_key: true
+        public: true
+      - name: borough
+        sql: borough
+        type: string
+      - name: zone_name
+        sql: zone_name
+        type: string

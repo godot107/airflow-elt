@@ -1,0 +1,113 @@
+# Certified semantic model, served by Cube. The measures mirror dbt/taxi/models/semantic/_semantic.yml
+# (MetricFlow) one for one; scripts/check_bi.py proves Cube = MetricFlow = marts, so the two copies can't drift.
+cubes:
+  - name: taxi_trips
+    title: Trips
+    description: One row per kept trip from gate-approved months (marts.fct_trips).
+    sql_table: marts.fct_trips
+
+    joins:
+      - name: pickup_zones
+        relationship: many_to_one
+        sql: "{CUBE}.pickup_zone_id = {pickup_zones}.zone_id"
+      - name: dropoff_zones
+        relationship: many_to_one
+        sql: "{CUBE}.dropoff_zone_id = {dropoff_zones}.zone_id"
+
+    dimensions:
+      # TLC trips carry no natural id. Cube needs a primary key to guard against join fan-out; ctid (the
+      # Postgres row address) is unique within a query, which is all Cube uses it for. Hidden from users.
+      - name: row_id
+        sql: "{CUBE}.ctid::text"
+        type: string
+        primary_key: true
+        public: false
+      - name: pickup_date
+        sql: pickup_date
+        type: time
+      - name: pickup_hour
+        sql: pickup_hour
+        type: number
+      - name: pickup_dow
+        description: ISO day of week, 1 = Monday.
+        sql: pickup_dow
+        type: number
+      - name: payment_type
+        description: TLC code; 1 = credit card, 2 = cash.
+        sql: payment_type
+        type: number
+
+    measures:
+      - name: trips
+        title: Trips
+        type: count
+      - name: revenue
+        title: Revenue
+        description: Total charged to passengers (fare, tips, tolls, fees).
+        sql: total_amount
+        type: sum
+        format: currency
+      - name: fare_total
+        sql: fare_amount
+        type: sum
+        public: false
+      - name: miles_total
+        sql: trip_miles
+        type: sum
+        public: false
+      - name: card_tip_total
+        description: Tips on card trips only; cash tips are not recorded.
+        sql: tip_amount
+        type: sum
+        filters:
+          - sql: "{CUBE}.payment_type = 1"
+        public: false
+      - name: card_fare_total
+        sql: fare_amount
+        type: sum
+        filters:
+          - sql: "{CUBE}.payment_type = 1"
+        public: false
+      - name: revenue_per_trip
+        title: Revenue per trip
+        sql: "{revenue} / NULLIF({trips}, 0)"
+        type: number
+        format: currency
+      - name: avg_fare
+        title: Average fare
+        sql: "{fare_total} / NULLIF({trips}, 0)"
+        type: number
+        format: currency
+      - name: avg_miles
+        title: Average trip miles
+        sql: "{miles_total} / NULLIF({trips}, 0)"
+        type: number
+      - name: card_tip_rate
+        title: Card tip rate
+        description: Tips divided by fares, card trips only (cash tips are not recorded).
+        sql: "{card_tip_total} / NULLIF({card_fare_total}, 0)"
+        type: number
+        format: percent
+      - name: trips_mtd
+        title: Trips, month to date
+        type: count
+        rolling_window:
+          type: to_date
+          granularity: month
+
+    pre_aggregations:
+      # Dashboards ask for month x borough over and over; serve that from a rollup in Cube Store instead of
+      # scanning ~23M fact rows each time. Ratios are rebuilt from the additive measures stored here.
+      - name: month_borough
+        measures: [trips, revenue, fare_total, miles_total, card_tip_total, card_fare_total]
+        dimensions: [pickup_zones.borough]
+        time_dimension: pickup_date
+        granularity: month
+        refresh_key:
+          every: 1 hour
+      - name: day_rollup
+        measures: [trips, revenue]
+        time_dimension: pickup_date
+        granularity: day
+        refresh_key:
+          every: 1 hour

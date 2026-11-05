@@ -44,7 +44,8 @@ def taxi_transform():
         # not with whichever parent dbt selects first.
         execution_config=ExecutionConfig(dbt_executable_path="/home/airflow/dbt-venv/bin/dbt",
                                          test_indirect_selection=TestIndirectSelection.BUILDABLE),
-        render_config=RenderConfig(test_behavior=TestBehavior.AFTER_EACH),
+        # BI adoption models run in bi_usage, on their own schedule.
+        render_config=RenderConfig(exclude=["tag:bi"], test_behavior=TestBehavior.AFTER_EACH),
     )
 
 

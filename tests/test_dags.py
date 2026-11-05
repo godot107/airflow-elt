@@ -10,7 +10,7 @@ def dagbag():
 
 def test_no_import_errors(dagbag):
     assert dagbag.import_errors == {}
-    assert {"taxi_ingest", "taxi_transform", "taxi_housekeeping"} <= set(dagbag.dag_ids)
+    assert {"taxi_ingest", "taxi_transform", "taxi_housekeeping", "bi_usage"} <= set(dagbag.dag_ids)
 
 
 def test_ingest_shape_and_safety(dagbag):
@@ -39,3 +39,13 @@ def test_housekeeping_is_weekly(dagbag):
     dag = dagbag.get_dag("taxi_housekeeping")
     assert {t.task_id for t in dag.tasks} == {"prune_downloads", "prune_logs"}
     assert dag.timetable.expression in ("@weekly", "0 0 * * 0")
+
+
+def test_bi_models_run_in_bi_usage_not_in_transform(dagbag):
+    transform = {t.task_id for t in dagbag.get_dag("taxi_transform").tasks}
+    assert not any("bi_" in t for t in transform)            # BI add-on can't break the taxi pipeline
+    bi = dagbag.get_dag("bi_usage")
+    ids = {t.task_id for t in bi.tasks}
+    assert {"sync_usage_log", "dbt_adoption.mart_bi_adoption.run", "dbt_adoption.stg_bi_usage.run"} <= ids
+    assert bi.get_task("sync_usage_log").downstream_task_ids
+    assert bi.catchup is False

@@ -1,0 +1,26 @@
+version: 2
+
+models:
+  - name: stg_bi_usage
+    description: Adoption-relevant BI events (dashboard views, chart loads, chart and dashboard edits), classified.
+    columns:
+      - name: event_type
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [dashboard_view, chart_load, chart_built, dashboard_built]
+
+  - name: mart_bi_adoption
+    description: >
+      Daily BI adoption KPIs: active viewers and makers, dashboard views, chart loads, the share of chart
+      loads that are certified, and uncertified charts in use (candidates to certify or consolidate).
+    columns:
+      - name: event_date
+        data_tests: [unique, not_null]
+      - name: certified_load_share
+        data_tests:
+          - value_between:
+              arguments:
+                min_value: 0
+                max_value: 1

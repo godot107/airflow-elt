@@ -4,7 +4,7 @@ RUN := $(COMPOSE) run --rm airflow-cli
 FROM ?= 2024-01-01
 TO   ?= 2024-06-30
 
-.PHONY: env up down nuke test dbt dbt-unit check lint docs docs-down demo-bad-month demo-recover backfill psql logs notebook semantic-setup mf semantic-check
+.PHONY: env up down nuke test dbt dbt-unit check lint docs docs-down demo-bad-month demo-recover backfill psql logs notebook semantic-setup mf semantic-check bi-env bi-up bi-down bi-check
 
 env:            ## write .env with random secrets (won't overwrite)
 	@test -f .env && echo ".env exists, leaving it" || python3 scripts/make_env.py > .env
@@ -57,13 +57,35 @@ demo-recover:   ## "fix the source" (drop the fault) and rerun the failed month 
 semantic-setup: ## host venv (.venv-mf) with the MetricFlow CLI for the semantic layer
 	python3 -m venv .venv-mf && .venv-mf/bin/pip install -q -r requirements-semantic.txt
 
+# dbt/taxi/target is shared with the Airflow image, and `make dbt-unit` leaves a manifest pointing at the
+# unit_* schemas, so every MetricFlow entry point re-parses against the real warehouse first (~3 s).
+MF_PARSE := DBT_TARGET=host ../../.venv-mf/bin/dbt parse --profiles-dir . --quiet
+
 mf:             ## query metrics by name: make mf ARGS="query --metrics trips,revenue --group-by metric_time__month"
-	@set -a && . ./.env && set +a && cd dbt/taxi && DBT_TARGET=host ../../.venv-mf/bin/mf $(ARGS)
+	@set -a && . ./.env && set +a && cd dbt/taxi && $(MF_PARSE) && DBT_TARGET=host ../../.venv-mf/bin/mf $(ARGS)
 
 semantic-check: ## validate the semantic layer against the warehouse and prove it matches the marts
-	@set -a && . ./.env && set +a && cd dbt/taxi && DBT_TARGET=host ../../.venv-mf/bin/dbt build --select metricflow_time_spine --profiles-dir . --quiet \
+	@set -a && . ./.env && set +a && cd dbt/taxi && $(MF_PARSE) \
+	  && DBT_TARGET=host ../../.venv-mf/bin/dbt build --select metricflow_time_spine --profiles-dir . --quiet \
 	  && DBT_TARGET=host ../../.venv-mf/bin/mf validate-configs 2>&1 | grep -E "ERRORS|ERROR:" | sed "s/.*[✔✖] //"
 	@set -a && . ./.env && set +a && .venv-mf/bin/python scripts/check_semantic_layer.py
+
+bi-env:         ## append any missing BI secrets to an existing .env
+	python3 scripts/make_env.py --missing .env >> .env
+
+bi-up: bi-env   ## BI add-on: Cube semantic layer (:4000 REST, :15432 SQL) + Superset (:8088), then bootstrap
+	$(COMPOSE) --profile bi up -d --build cubestore cube superset-db superset
+	@set -a && . ./.env && set +a && $(COMPOSE) exec -T warehouse psql -q -U warehouse -d warehouse \
+	  -v pw="$$CUBE_DB_PASSWORD" < bi/warehouse_reader.sql
+	$(COMPOSE) --profile bi restart cube
+	@set -a && . ./.env && set +a && .venv-mf/bin/python bi/bootstrap_superset.py
+
+bi-down:        ## stop the BI add-on (volumes kept)
+	$(COMPOSE) --profile bi stop cubestore cube superset-db superset
+
+bi-check:       ## certify: Cube = MetricFlow = marts, row-level security, rollups used, Superset dashboard serves
+	@set -a && . ./.env && set +a && cd dbt/taxi && $(MF_PARSE)
+	@set -a && . ./.env && set +a && .venv-mf/bin/python scripts/check_bi.py
 
 notebook:       ## the demo notebook (host Python with jupyter, pandas, matplotlib)
 	jupyter lab notebooks/demo.ipynb

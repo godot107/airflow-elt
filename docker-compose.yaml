@@ -19,6 +19,7 @@ x-airflow-common:
     AIRFLOW__API_AUTH__JWT_SECRET: ${JWT_SECRET}
     AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: 'true'
     AIRFLOW_CONN_WAREHOUSE: postgresql://warehouse:${WAREHOUSE_PASSWORD}@warehouse:5432/warehouse
+    AIRFLOW_CONN_SUPERSET_DB: postgresql://superset:${SUPERSET_DB_PASSWORD}@superset-db:5432/superset  # BI add-on
     AIRFLOW_CONFIG: /opt/airflow/config/airflow.cfg
   volumes:
     - ./dags:/opt/airflow/dags
@@ -163,6 +164,69 @@ services:
     ports: ["127.0.0.1:8081:8081"]
     restart: "no"
 
+  # ---- BI add-on (profile "bi", off by default): make bi-up -------------------------------------------
+  cubestore:                    # Cube's cache/rollup store for pre-aggregations
+    image: cubejs/cubestore:v1.8.19
+    profiles: [bi]
+    environment:
+      CUBESTORE_REMOTE_DIR: /cube/data
+    volumes: [cubestore-data:/cube/data]
+    restart: always
+
+  cube:                         # semantic layer: REST :4000, Postgres-wire SQL API :15432
+    image: cubejs/cube:v1.8.19
+    profiles: [bi]
+    depends_on: [cubestore]
+    environment:
+      CUBEJS_DB_TYPE: postgres
+      CUBEJS_DB_HOST: warehouse
+      CUBEJS_DB_NAME: warehouse
+      CUBEJS_DB_USER: cube_reader
+      CUBEJS_DB_PASS: ${CUBE_DB_PASSWORD}
+      CUBEJS_API_SECRET: ${CUBEJS_API_SECRET}
+      CUBEJS_DEV_MODE: "false"
+      CUBEJS_CUBESTORE_HOST: cubestore
+      CUBEJS_REFRESH_WORKER: "true"
+      CUBEJS_PG_SQL_PORT: "15432"
+      CUBEJS_SQL_SUPER_USER: ""
+      CUBE_SQL_ADMIN_USER: ${CUBE_SQL_ADMIN_USER}
+      CUBE_SQL_ADMIN_PASSWORD: ${CUBE_SQL_ADMIN_PASSWORD}
+      CUBE_SQL_ANALYST_USER: ${CUBE_SQL_ANALYST_USER}
+      CUBE_SQL_ANALYST_PASSWORD: ${CUBE_SQL_ANALYST_PASSWORD}
+      CUBE_SQL_ANALYST_BOROUGH: ${CUBE_SQL_ANALYST_BOROUGH}
+    volumes: [./bi/cube:/cube/conf]
+    ports: ["127.0.0.1:4000:4000", "127.0.0.1:15432:15432"]
+    restart: always
+
+  superset-db:
+    image: postgres:16
+    profiles: [bi]
+    environment:
+      POSTGRES_USER: superset
+      POSTGRES_PASSWORD: ${SUPERSET_DB_PASSWORD}
+      POSTGRES_DB: superset
+    ports: ["127.0.0.1:5434:5432"]  # host access for make bi-check; localhost only
+    volumes: [superset-db:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "superset"]
+      interval: 10s
+      retries: 5
+    restart: always
+
+  superset:                     # dashboards on the certified semantic layer: http://localhost:8088
+    build: ./bi/superset
+    image: airflow-elt-superset:6.1.0
+    profiles: [bi]
+    depends_on:
+      superset-db:
+        condition: service_healthy
+    environment:
+      SUPERSET_SECRET_KEY: ${SUPERSET_SECRET_KEY}
+      SUPERSET_DB_PASSWORD: ${SUPERSET_DB_PASSWORD}
+      SUPERSET_ADMIN_PASSWORD: ${SUPERSET_ADMIN_PASSWORD}
+    ports: ["127.0.0.1:8088:8088"]
+    restart: always
+
   airflow-cli:                  # docker compose run --rm airflow-cli <airflow args>
     <<: *airflow-common
     profiles: [debug]
@@ -174,3 +238,5 @@ services:
 volumes:
   airflow-db:
   warehouse-db:
+  cubestore-data:
+  superset-db:

@@ -1,0 +1,33 @@
+# Views are the certified, BI-facing surface: one flat table per subject, joins already resolved, only
+# business members exposed (helper sums and the row key stay hidden). Superset datasets sit on these.
+views:
+  - name: taxi_operations
+    title: Taxi operations (certified)
+    description: Trips, revenue and tip rate by date, hour and zone. Metrics certified against the marts.
+    cubes:
+      - join_path: taxi_trips
+        includes:
+          - trips
+          - revenue
+          - revenue_per_trip
+          - avg_fare
+          - avg_miles
+          - card_tip_rate
+          - trips_mtd
+          - pickup_date
+          - pickup_hour
+          - pickup_dow
+          - payment_type
+      - join_path: taxi_trips.pickup_zones
+        prefix: true
+        includes: [borough, zone_name, service_zone]
+      - join_path: taxi_trips.dropoff_zones
+        prefix: true
+        includes: [borough, zone_name]
+
+  - name: data_health
+    title: Data health (certified)
+    description: Rows loaded, kept and the kept share per source month.
+    cubes:
+      - join_path: data_quality
+        includes: [source_month, raw_rows, kept_rows, kept_share]
