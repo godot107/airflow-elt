@@ -221,13 +221,7 @@ MetricFlow proves the definitions; the BI add-on serves them to people, the way 
 analytics program does. It is optional (`make bi-up`, Docker profile `bi`; `make up` alone is unchanged)
 and all open source:
 
-```mermaid
-flowchart LR
-    W[(Postgres warehouse<br/>marts)] -->|read-only role| C[Cube<br/>semantic model, RLS, rollups]
-    C -->|Postgres-wire SQL API| S[Superset<br/>certified datasets + dashboard]
-    S -->|usage log| A[bi_usage DAG] --> M[(mart_bi_adoption)]
-    MF[MetricFlow definitions] -.->|make bi-check: must agree| C
-```
+![BI add-on architecture: warehouse to Cube semantic layer to Superset, with adoption measured from the usage log](docs/img/bi_architecture.png)
 
 | Piece | What it does |
 |---|---|
@@ -237,7 +231,9 @@ flowchart LR
 | **Superset 6.1** (`bi/bootstrap_superset.py`) | Connects to Cube's SQL API. Datasets, their metrics (`MEASURE(...)`, so nobody re-aggregates by hand) and the "Taxi operations" dashboard carry Superset's **certified** badge. The "Taxi Viewer" role opens that one dashboard and nothing else: no datasets, no database connections, no SQL Lab. |
 | **Adoption KPIs** (`dags/bi_usage.py`, `mart_bi_adoption`) | A daily DAG copies Superset's usage log into the warehouse (incremental by log id, so reruns never duplicate) and dbt builds active viewers, active makers, dashboard views, chart loads, the **share of chart loads that are certified**, and uncertified charts in use on certified data (candidates to certify or consolidate). |
 
-![Taxi operations dashboard in Superset, built on the certified Cube views](docs/img/superset_dashboard.png)
+![Walkthrough of the certified Taxi operations dashboard in Superset: certified badge, hover tooltips, sorting the borough scorecard](docs/img/superset_walkthrough.gif)
+
+![Terminal replay of live output: the same query as bi_admin returns every borough, as queens_analyst only Queens (even for a grand total), then make bi-check passes](docs/img/rls_and_check.gif)
 
 **Certified means checked.** `make bi-check` (`scripts/check_bi.py`) fails on any of these:
 
@@ -260,6 +256,8 @@ maker's one uncertified chart. The point is the measurement pipeline, not the co
 ```bash
 make bi-up        # secrets, Cube + Cube Store + Superset, read-only role, bootstrap (dashboard at :8088)
 python bi/simulate_usage.py   # optional demo traffic (shared venv with Playwright); then trigger bi_usage
+python bi/record_demo.py      # README GIFs: dashboard walkthrough (Playwright + ffmpeg) ...
+python bi/terminal_gif.py     # ... and the RLS / bi-check replay, both from live output
 make bi-check     # certify everything above
 make bi-down
 ```

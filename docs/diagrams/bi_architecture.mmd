@@ -1,0 +1,26 @@
+flowchart LR
+    subgraph pipeline["Pipeline (Airflow + dbt)"]
+        R[(raw trips)] -->|quality gate| F[(fct_trips + dim_zones<br/>star schema)]
+        F --> MT[(marts)]
+    end
+    subgraph semantic["Semantic layer: defined once"]
+        MF["dbt MetricFlow<br/>8 metric definitions"]
+        C["Cube<br/>certified views · row-level security<br/>month × borough rollup"]
+    end
+    subgraph bi["Self-service BI"]
+        S["Superset<br/>certified datasets + dashboard<br/>viewer role: one dashboard only"]
+    end
+    subgraph adoption["Adoption"]
+        U[bi_usage DAG] --> AM[(mart_bi_adoption<br/>viewers · makers · certified share)]
+    end
+    F -->|read-only role| C
+    MF -.->|make bi-check:<br/>Cube = MetricFlow = marts| C
+    MT -.-> MF
+    C -->|SQL API| S
+    S -->|usage log| U
+    classDef store fill:#e0f2fe,stroke:#0369a1,color:#0c4a6e
+    classDef layer fill:#ecfdf5,stroke:#047857,color:#064e3b
+    classDef app fill:#fef3c7,stroke:#b45309,color:#78350f
+    class R,F,MT,AM store
+    class MF,C layer
+    class S,U app
